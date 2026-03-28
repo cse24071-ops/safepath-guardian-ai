@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { Users, Shield, Phone, MapPin, Clock, Bell, Send, Eye, AlertTriangle, CheckCircle, Navigation, Sparkles, UserCheck } from "lucide-react";
-import MapBackground from "@/components/MapBackground";
+import LeafletMap from "@/components/LeafletMap";
 import FloatingControls from "@/components/FloatingControls";
 
 const guardians = [
@@ -20,7 +20,7 @@ const timeline = [
 const GuardianMode = () => {
   return (
     <div className="relative w-full h-full">
-      <MapBackground variant="guardian" />
+      <LeafletMap variant="guardian" showUser />
       <FloatingControls showSOS />
 
       {/* Guardian Panel */}

@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Navigation, MapPin, Clock, Shield, Sparkles, AlertTriangle, ArrowRight, RefreshCw, ChevronUp } from "lucide-react";
-import MapBackground from "@/components/MapBackground";
-import MapMarkers from "@/components/MapMarkers";
+import LeafletMap from "@/components/LeafletMap";
 import FloatingControls from "@/components/FloatingControls";
 
 const checkpoints = [
@@ -38,8 +37,7 @@ const LiveNavigation = () => {
 
   return (
     <div className="relative w-full h-full">
-      <MapBackground variant="navigation" />
-      <MapMarkers showUser showDestination />
+      <LeafletMap variant="navigation" showUser showDestination />
       <FloatingControls showSOS />
 
       {/* Animated Vehicle */}

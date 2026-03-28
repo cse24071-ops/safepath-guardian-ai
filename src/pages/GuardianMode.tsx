@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { Users, Shield, Phone, MapPin, Clock, Bell, Send, Eye, AlertTriangle, CheckCircle, Navigation, Sparkles, UserCheck } from "lucide-react";
-import MapBackground from "@/components/MapBackground";
+import LeafletMap from "@/components/LeafletMap";
 import FloatingControls from "@/components/FloatingControls";
 
 const guardians = [

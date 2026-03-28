@@ -37,8 +37,7 @@ const LiveNavigation = () => {
 
   return (
     <div className="relative w-full h-full">
-      <MapBackground variant="navigation" />
-      <MapMarkers showUser showDestination />
+      <LeafletMap variant="navigation" showUser showDestination />
       <FloatingControls showSOS />
 
       {/* Animated Vehicle */}

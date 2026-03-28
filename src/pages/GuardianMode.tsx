@@ -20,7 +20,7 @@ const timeline = [
 const GuardianMode = () => {
   return (
     <div className="relative w-full h-full">
-      <MapBackground variant="guardian" />
+      <LeafletMap variant="guardian" showUser />
       <FloatingControls showSOS />
 
       {/* Guardian Panel */}

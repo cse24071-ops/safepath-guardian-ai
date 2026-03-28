@@ -46,8 +46,7 @@ const RoutePlanning = () => {
 
   return (
     <div className="relative w-full h-full">
-      <MapBackground variant="route" />
-      <MapMarkers showUser showDestination />
+      <LeafletMap variant="route" showUser showDestination />
       <FloatingControls />
 
       {/* Search Panel */}

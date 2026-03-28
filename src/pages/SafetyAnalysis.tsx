@@ -15,8 +15,7 @@ const SafetyAnalysis = () => {
 
   return (
     <div className="relative w-full h-full">
-      <MapBackground variant="route" />
-      <MapMarkers showUser showDestination />
+      <LeafletMap variant="route" showUser showDestination />
       <FloatingControls showSOS />
 
       {/* Safety Score Card */}

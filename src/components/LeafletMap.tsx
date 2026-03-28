@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, memo } from "react";
+import { useEffect, useRef, useState, memo, useCallback } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -50,13 +50,43 @@ const createPOIIcon = (emoji: string) =>
 // Default center (Bangalore) as fallback
 const DEFAULT_CENTER: [number, number] = [12.9716, 77.5946];
 
+export interface RouteInfo {
+  distance: number; // meters
+  duration: number; // seconds
+  geometry: [number, number][]; // lat,lng pairs
+}
+
 interface LeafletMapProps {
   variant?: "default" | "route" | "navigation" | "guardian";
   showUser?: boolean;
   showDestination?: boolean;
   showPOIs?: boolean;
+  destinationCoords?: [number, number] | null;
+  destinationLabel?: string;
   sosPosition?: [number, number] | null;
   onMapReady?: (map: L.Map) => void;
+  onUserPosition?: (pos: [number, number]) => void;
+  onRoutesCalculated?: (routes: RouteInfo[]) => void;
+}
+
+/** Fetch up to 3 alternative routes from OSRM */
+async function fetchOSRMRoutes(
+  from: [number, number],
+  to: [number, number]
+): Promise<RouteInfo[]> {
+  const url = `https://router.project-osrm.org/route/v1/foot/${from[1]},${from[0]};${to[1]},${to[0]}?overview=full&geometries=geojson&alternatives=true`;
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.code !== "Ok" || !data.routes?.length) return [];
+    return data.routes.map((r: any) => ({
+      distance: r.distance,
+      duration: r.duration,
+      geometry: r.geometry.coordinates.map((c: [number, number]) => [c[1], c[0]] as [number, number]),
+    }));
+  } catch {
+    return [];
+  }
 }
 
 const LeafletMap = memo(({
@@ -64,14 +94,26 @@ const LeafletMap = memo(({
   showUser = false,
   showDestination = false,
   showPOIs = true,
+  destinationCoords = null,
+  destinationLabel = "Destination",
   sosPosition = null,
   onMapReady,
+  onUserPosition,
+  onRoutesCalculated,
 }: LeafletMapProps) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<L.Map | null>(null);
   const userMarkerRef = useRef<L.Marker | null>(null);
+  const destMarkerRef = useRef<L.Marker | null>(null);
+  const routeLayersRef = useRef<L.Layer[]>([]);
   const watchIdRef = useRef<number | null>(null);
   const [userPos, setUserPos] = useState<[number, number] | null>(null);
+
+  // Stable callback wrapper
+  const onUserPositionRef = useRef(onUserPosition);
+  onUserPositionRef.current = onUserPosition;
+  const onRoutesCalculatedRef = useRef(onRoutesCalculated);
+  onRoutesCalculatedRef.current = onRoutesCalculated;
 
   // Initialize the map
   useEffect(() => {
@@ -84,28 +126,25 @@ const LeafletMap = memo(({
       attributionControl: false,
     });
 
-    // Dark-themed OpenStreetMap tiles
     L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
       maxZoom: 19,
     }).addTo(map);
 
-    // Add zoom control to bottom-left to avoid clashing with floating controls
     L.control.zoom({ position: "bottomleft" }).addTo(map);
 
     mapInstance.current = map;
     onMapReady?.(map);
 
-    // Try to get user location and center on it
+    // Get user location
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           const coords: [number, number] = [pos.coords.latitude, pos.coords.longitude];
           setUserPos(coords);
-          map.setView(coords, 16);
+          onUserPositionRef.current?.(coords);
+          map.setView(coords, 15);
         },
-        () => {
-          // Fallback: stay on default center
-        },
+        () => {},
         { enableHighAccuracy: true }
       );
     }
@@ -127,6 +166,7 @@ const LeafletMap = memo(({
       (pos) => {
         const coords: [number, number] = [pos.coords.latitude, pos.coords.longitude];
         setUserPos(coords);
+        onUserPositionRef.current?.(coords);
       },
       () => {},
       { enableHighAccuracy: true }
@@ -140,11 +180,10 @@ const LeafletMap = memo(({
     };
   }, [showUser]);
 
-  // Update user marker when position changes
+  // User marker
   useEffect(() => {
     const map = mapInstance.current;
     if (!map || !showUser) return;
-
     const pos = userPos || DEFAULT_CENTER;
 
     if (userMarkerRef.current) {
@@ -156,22 +195,67 @@ const LeafletMap = memo(({
     }
   }, [userPos, showUser]);
 
-  // Show destination marker (offset from user or default)
+  // Destination marker + OSRM routing
   useEffect(() => {
     const map = mapInstance.current;
-    if (!map || !showDestination) return;
+    if (!map) return;
 
-    const base = userPos || DEFAULT_CENTER;
-    const destPos: [number, number] = [base[0] + 0.012, base[1] + 0.015];
+    // Clean previous destination marker
+    if (destMarkerRef.current) {
+      map.removeLayer(destMarkerRef.current);
+      destMarkerRef.current = null;
+    }
 
-    const marker = L.marker(destPos, { icon: createDestinationIcon() })
+    // Clean previous route layers
+    routeLayersRef.current.forEach((l) => map.removeLayer(l));
+    routeLayersRef.current = [];
+
+    const destCoords = destinationCoords;
+
+    // If no explicit destination but showDestination is true, use offset
+    const effectiveDest: [number, number] | null = destCoords
+      ? destCoords
+      : showDestination
+      ? [(userPos || DEFAULT_CENTER)[0] + 0.012, (userPos || DEFAULT_CENTER)[1] + 0.015]
+      : null;
+
+    if (!effectiveDest) return;
+
+    // Place destination marker
+    destMarkerRef.current = L.marker(effectiveDest, { icon: createDestinationIcon() })
       .addTo(map)
-      .bindPopup("🏁 Phoenix Mall, MG Road");
+      .bindPopup(`🏁 ${destinationLabel}`);
 
-    return () => { map.removeLayer(marker); };
-  }, [showDestination, userPos]);
+    // Fit bounds to show both user and destination
+    const origin = userPos || DEFAULT_CENTER;
+    const bounds = L.latLngBounds([origin, effectiveDest]);
+    map.fitBounds(bounds, { padding: [80, 80] });
 
-  // Show POI markers (hospitals, police, safe places)
+    // Fetch real routes from OSRM
+    if (variant === "route" || variant === "navigation") {
+      fetchOSRMRoutes(origin, effectiveDest).then((routes) => {
+        if (!mapInstance.current) return;
+
+        const colors = ["hsl(145,65%,48%)", "hsl(42,90%,55%)", "hsl(0,72%,56%)"];
+        const weights = [6, 4, 4];
+        const opacities = [0.9, 0.6, 0.5];
+
+        routes.forEach((route, i) => {
+          const line = L.polyline(route.geometry, {
+            color: colors[i] || colors[2],
+            weight: weights[i] || 3,
+            opacity: opacities[i] || 0.4,
+            dashArray: i === 0 ? undefined : "8 5",
+          }).addTo(mapInstance.current!);
+          routeLayersRef.current.push(line);
+        });
+
+        onRoutesCalculatedRef.current?.(routes);
+      });
+    }
+  }, [destinationCoords, showDestination, variant, userPos, destinationLabel]);
+
+  // POI markers
   useEffect(() => {
     const map = mapInstance.current;
     if (!map || !showPOIs) return;
@@ -197,55 +281,7 @@ const LeafletMap = memo(({
     return () => { markers.forEach((m) => map.removeLayer(m)); };
   }, [showPOIs, userPos]);
 
-  // Draw route lines for route/navigation variants
-  useEffect(() => {
-    const map = mapInstance.current;
-    if (!map || (variant !== "route" && variant !== "navigation")) return;
-
-    const base = userPos || DEFAULT_CENTER;
-
-    // Safe route (green)
-    const safeRoute: [number, number][] = [
-      [base[0], base[1]],
-      [base[0] + 0.003, base[1] + 0.004],
-      [base[0] + 0.006, base[1] + 0.007],
-      [base[0] + 0.009, base[1] + 0.011],
-      [base[0] + 0.012, base[1] + 0.015],
-    ];
-    const moderateRoute: [number, number][] = [
-      [base[0], base[1]],
-      [base[0] + 0.002, base[1] + 0.005],
-      [base[0] + 0.005, base[1] + 0.009],
-      [base[0] + 0.01, base[1] + 0.013],
-      [base[0] + 0.012, base[1] + 0.015],
-    ];
-    const riskyRoute: [number, number][] = [
-      [base[0], base[1]],
-      [base[0] + 0.004, base[1] + 0.002],
-      [base[0] + 0.007, base[1] + 0.006],
-      [base[0] + 0.01, base[1] + 0.01],
-      [base[0] + 0.012, base[1] + 0.015],
-    ];
-
-    const lines = [
-      L.polyline(safeRoute, { color: "hsl(145,65%,48%)", weight: 5, opacity: 0.85, dashArray: "10 5" }).addTo(map),
-      L.polyline(moderateRoute, { color: "hsl(42,90%,55%)", weight: 4, opacity: 0.6, dashArray: "8 5" }).addTo(map),
-      L.polyline(riskyRoute, { color: "hsl(0,72%,56%)", weight: 4, opacity: 0.5, dashArray: "8 5" }).addTo(map),
-    ];
-
-    // Danger zone circles
-    const dangerZones = [
-      L.circle([base[0] + 0.005, base[1] + 0.003], { radius: 150, color: "hsl(0,72%,56%)", fillColor: "hsl(0,72%,56%)", fillOpacity: 0.15, weight: 1 }).addTo(map),
-      L.circle([base[0] + 0.008, base[1] + 0.008], { radius: 100, color: "hsl(0,72%,56%)", fillColor: "hsl(0,72%,56%)", fillOpacity: 0.1, weight: 1 }).addTo(map),
-    ];
-
-    return () => {
-      lines.forEach((l) => map.removeLayer(l));
-      dangerZones.forEach((z) => map.removeLayer(z));
-    };
-  }, [variant, userPos]);
-
-  // Guardian mode: pulsing circle around user
+  // Guardian mode circle
   useEffect(() => {
     const map = mapInstance.current;
     if (!map || variant !== "guardian") return;

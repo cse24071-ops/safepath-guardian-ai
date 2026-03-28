@@ -1,7 +1,6 @@
 import { motion } from "framer-motion";
 import { Shield, Sun, Users, FileWarning, Sparkles, MapPin, Clock, Navigation, ChevronUp, Phone, AlertTriangle } from "lucide-react";
-import MapBackground from "@/components/MapBackground";
-import MapMarkers from "@/components/MapMarkers";
+import LeafletMap from "@/components/LeafletMap";
 import FloatingControls from "@/components/FloatingControls";
 import { useNavigate } from "react-router-dom";
 
